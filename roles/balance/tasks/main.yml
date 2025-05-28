@@ -1,0 +1,48 @@
+---
+- name: Download Angie GPG key
+  get_url:
+    url: https://angie.software/keys/angie-signing.gpg
+    dest: /etc/apt/trusted.gpg.d/angie-signing.gpg
+    mode: '0644'
+
+- name: Add Angie repository
+  apt_repository:
+    repo: deb https://download.angie.software/angie/ubuntu/22.04 jammy main
+    state: present
+    filename: angie
+  register: repo_result
+  until: repo_result is succeeded
+  retries: 3
+  delay: 20
+  ignore_errors: yes
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+  register: cache_result
+  until: cache_result is succeeded
+  retries: 6
+  delay: 20
+  ignore_errors: yes
+
+- name: Install Angie
+  apt:
+    name: angie
+    state: present
+
+- name: Copy Angie configuration
+  template:
+    src: angie.conf.j2
+    dest: /etc/angie/angie.conf
+    mode: '0644'
+
+- name: Restart Angie
+  service:
+    name: angie
+    state: restarted
+
+- name: Ensure Angie is running
+  service:
+    name: angie
+    state: started
+    enabled: yes

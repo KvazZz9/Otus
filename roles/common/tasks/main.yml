@@ -1,0 +1,19 @@
+---
+- name: Update apt cache
+  apt:
+    update_cache: yes
+  register: cache_result
+  until: cache_result is succeeded
+  retries: 6
+  delay: 20
+  ignore_errors: yes
+
+- name: Install common packages
+  apt:
+    name:
+      - ca-certificates
+      - curl
+      - vim
+      - net-tools
+      - mc
+    state: present

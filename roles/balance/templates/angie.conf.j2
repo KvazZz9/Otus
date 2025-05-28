@@ -1,0 +1,58 @@
+user  angie;
+worker_processes  auto;
+
+error_log  /var/log/angie/error.log notice;
+pid        /var/run/angie.pid;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       /etc/angie/mime.types;
+    default_type  application/octet-stream;
+
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log  /var/log/angie/access.log  main;
+
+    sendfile        on;
+    tcp_nopush      on;
+    keepalive_timeout  65;
+
+    # Round-robin balancing
+    upstream backend_rr {
+        server 192.168.117.210:80;  # front01
+        server 192.168.117.211:80;  # front02
+    }
+
+    # Hash balancing
+    upstream backend_hash {
+        hash $remote_addr;
+        server 192.168.117.210:80;  # front01
+        server 192.168.117.211:80;  # front02
+    }
+
+    server {
+        listen       80;
+        server_name  localhost;
+
+        # Round-robin example
+        location /rr/ {
+            proxy_pass http://backend_rr;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+
+        # Hash example
+        location /hash/ {
+            proxy_pass http://backend_hash;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+    }
+}

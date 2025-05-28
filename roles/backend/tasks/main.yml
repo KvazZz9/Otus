@@ -1,0 +1,110 @@
+---
+- name: Install Docker dep
+  apt:
+    name:
+      - apt-transport-https
+      - software-properties-common
+    state: present
+   
+- name: Add Docker GPG key
+  apt_key:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    state: present
+
+- name: Add Docker repository
+  apt_repository:
+    repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu jammy stable
+    state: present
+    filename: docker
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+  register: cache_result
+  until: cache_result is succeeded
+  retries: 6
+  delay: 20
+  ignore_errors: yes
+
+- name: Install Docker
+  apt:
+    name: docker-ce
+    state: present
+    update_cache: yes
+
+- name: Ensure Docker is running
+  service:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Pull vscoder/webdebugger image
+  docker_image:
+    name: vscoder/webdebugger
+    source: pull
+    state: present
+
+- name: Run webdebugger container
+  docker_container:
+    name: webdebugger
+    image: vscoder/webdebugger
+    state: started
+    restart_policy: always
+    ports:
+      - "8080:8080"
+
+- name: Install Angie dependencies
+  apt:
+    name:
+      - ca-certificates
+      - curl
+    state: present
+    update_cache: yes
+
+- name: Download Angie GPG key
+  get_url:
+    url: https://angie.software/keys/angie-signing.gpg
+    dest: /etc/apt/trusted.gpg.d/angie-signing.gpg
+    mode: '0644'
+
+- name: Add Angie repository
+  apt_repository:
+    repo: deb https://download.angie.software/angie/ubuntu/22.04 jammy main
+    state: present
+    filename: angie
+  register: repo_result
+  until: repo_result is succeeded
+  retries: 2
+  delay: 20
+  ignore_errors: yes
+
+- name: Update apt cache
+  apt:
+    update_cache: yes
+  register: cache_result
+  until: cache_result is succeeded
+  retries: 6
+  delay: 20
+  ignore_errors: yes
+
+- name: Install Angie
+  apt:
+    name: angie
+    state: present
+
+- name: Copy Angie configuration
+  template:
+    src: angie.conf.j2
+    dest: /etc/angie/angie.conf
+    mode: '0644'
+
+- name: Restart Angie
+  service:
+    name: angie
+    state: restarted
+
+- name: Ensure Angie is running
+  service:
+    name: angie
+    state: started
+    enabled: yes
