@@ -1,0 +1,78 @@
+default:
+  tags:
+    - ansible
+
+stages:
+  - plan
+  - build
+  - destroy
+  - inno
+  
+
+variables:
+  TF_DIR: "./tofu"
+  TF_VAR_gitlab_token: "$CI_JOB_TOKEN"  
+
+.tofu_settings: &tofu_settings
+  before_script:
+    - pwd
+    - export TF_VAR_VAULT_TOKEN="${TF_VAR_VAULT_TOKEN}"
+    - export VAULT_TOKEN="${TF_VAR_VAULT_TOKEN}"
+    - export VAULT_ADDR="***:8200"
+    - echo "${VAULT_ADDR}"
+    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
+    - export TF_HTTP_USERNAME="gitlab-ci-token"
+    - cd "${TF_DIR}"
+    - tofu init -input=false 
+    - tofu version
+
+plan:
+  stage: plan
+  <<: *tofu_settings
+  script:
+    - tofu validate
+    - tofu plan -input=false -out=tfplan -detailed-exitcode || [ $? -eq 2 ]
+    - echo "Tofu plan saved to tfplan"
+  artifacts:
+    paths:
+      - "${TF_DIR}/tfplan"
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual  
+  allow_failure: false
+
+build:
+  stage: build
+  <<: *tofu_settings
+  needs:
+    - job: plan
+      artifacts: true
+      optional: true  
+  script:
+    - tofu apply -input=false -auto-approve tfplan
+    - echo "Infrastructure successfully deployed"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+
+destroy:
+  stage: destroy
+  <<: *tofu_settings
+  script:
+    - tofu destroy -input=false -auto-approve
+    - echo "Infrastructure successfully destroyed"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      when: manual
+  allow_failure: false
+
+inno:       
+ stage: inno
+ needs: []
+ script:
+    - ansible all -i inventory.ini -m ping
+    - ansible-playbook -vv -i ./inventory.ini ./playbook.yml
+ when: manual
+
