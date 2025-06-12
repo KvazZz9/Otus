@@ -1,0 +1,32 @@
+---
+- name: "Ensure MySQL databases are present"
+  mysql_db:
+    name: "{{ item.name }}"
+    collation: "{{ item.collation | default('utf8mb4_ru_0900_as_cs') }}"
+    encoding: "{{ item.encoding | default('utf8mb4') }}"
+    state: "present"
+    login_host: "localhost"
+    login_user: "root"
+    login_password: "{{ mysql_root_password }}"
+  with_items: "{{ mysql_databases }}"
+  when: mysql_databases is defined and mysql_databases | length > 0
+
+- name: "Create kvaz_study database (default)"
+  mysql_db:
+    name: "kvaz_study"
+    collation: "utf8mb4_ru_0900_as_cs"
+    encoding: "utf8mb4"
+    state: "present"
+    login_host: "localhost"
+    login_user: "root"
+    login_password: "{{ mysql_root_password }}"
+  when: 
+    - mysql_databases is not defined or "kvaz_study" not in (mysql_databases | map(attribute='name') | list)
+    - inventory_hostname == "mysql1"  
+
+
+
+- name: "Load timezone database into MySQL"
+  shell: "mysql_tzinfo_to_sql /usr/share/zoneinfo | mysql mysql"
+  when:
+    - "mysql_timezone_info|bool"

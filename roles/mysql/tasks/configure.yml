@@ -1,0 +1,41 @@
+---
+- name: Configure firewall for MySQL Cluster
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+    src: "192.168.117.0/24"  
+  with_items:
+    - 3306    # MySQL client connections
+    - 33060   # MySQL X Protocol (для MySQL Shell)
+    - 33061   # Group Replication traffic
+  notify: Restart mysql
+
+- name: "Update the my.cnf"
+  ansible.builtin.template: "src=etc_mysql_my.cnf.j2 dest=/etc/mysql/my.cnf owner=root mode=0644"
+  register: "config_file"
+  notify:
+    - "Restart mysql"
+
+- name: "Ensure that mysql is running and enabled"
+  ansible.builtin.service:
+    name: "mysql"
+    state: "started"
+    enabled: "yes"
+  register: mysql_service
+
+# This service restart is needed when changing default mysql_datadir, mysql_native_password
+# and other settings. So better restart when the my.cnf file changes
+# Restart when my.cnf has changed and it has not been restarted by the above task
+- name: "Restart mysql to apply changes done in my.cnf file"
+  ansible.builtin.service:
+    name: "mysql"
+    state: "restarted"
+  when:
+    - config_file.changed
+    - mysql_service is defined
+    - not mysql_service.changed
+
+# Update /etc/hosts to connect to other nodes using DNS
+- name: "Update the /etc/hosts"
+  ansible.builtin.template: "src=hosts.j2 dest=/etc/hosts owner=root mode=0644"
+  register: "config_file"
