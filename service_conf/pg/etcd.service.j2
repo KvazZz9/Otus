@@ -1,0 +1,23 @@
+[Unit]
+Description=etcd - highly-available key value store
+Documentation=https://etcd.io/docs
+Documentation=man:etcd
+After=network.target
+Wants=network-online.target
+
+[Service]
+Environment=DAEMON_ARGS=
+Environment=ETCD_NAME=%H
+Environment=ETCD_DATA_DIR={{ data_dir }}
+EnvironmentFile=-{{ config_dir }}/etcd.conf
+Type=notify
+User=etcd
+PermissionsStartOnly=true
+ExecStart=/usr/bin/etcd $DAEMON_ARGS
+Restart=on-abnormal
+LimitNOFILE=65536
+StandardError=append:{{ logs_dir }}/etcd.err
+
+[Install]
+WantedBy=multi-user.target
+Alias=etcd2.service

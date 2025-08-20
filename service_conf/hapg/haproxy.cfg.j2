@@ -1,0 +1,31 @@
+defaults
+    mode                    http
+    log                     global
+    option                  httplog
+    option                  dontlognull
+    option http-server-close
+    option                  redispatch
+    retries                 2
+    timeout http-request    10s
+    timeout queue           1m
+    timeout connect         4s
+    timeout client          24h
+    timeout server          30m
+    timeout http-keep-alive 10s
+    timeout check           5s
+    maxconn                 3000
+
+frontend postgresql_frontend
+    bind *:5432
+    mode tcp
+    option tcplog
+    default_backend postgresql_backend
+
+backend postgresql_backend
+    mode tcp
+    option httpchk GET /master
+    http-check expect status 200
+    default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
+    server pg01 192.168.117.123:6432 check port 8008
+    server pg02 192.168.117.124:6432 check port 8008
+    server pg03 192.168.117.125:6432 check port 8008

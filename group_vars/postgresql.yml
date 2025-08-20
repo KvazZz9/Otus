@@ -1,0 +1,49 @@
+---
+postgresql_version: 16
+postgresql_data_dir: /var/lib/postgresql/16/main
+postgresql_bin_dir: /usr/lib/postgresql/16/bin
+postgresql_config_dir: /etc/postgresql/16/main
+postgresql_listen: "{{ ansible_default_ipv4.address }},127.0.0.1"
+postgresql_connect_address: "{{ ansible_default_ipv4.address }}:5432"
+postgresql_port: 5432
+
+patroni_scope: PGCL
+patroni_namespace: /service/
+patroni_restapi_listen: "{{ ansible_default_ipv4.address }}:8008"
+patroni_restapi_connect_address: "{{ ansible_default_ipv4.address }}:8008"
+patroni_etcd_hosts: "192.168.117.123:2379,192.168.117.124:2379,192.168.117.125:2379"
+patroni_name: "{{ inventory_hostname_short }}"
+patroni_postgresql_parameters:
+  max_connections: 300
+  shared_buffers: 4GB
+  work_mem: 32MB
+  maintenance_work_mem: 2GB
+  effective_cache_size: 12GB
+  checkpoint_timeout: 15min
+  wal_compression: true
+  min_wal_size: 2GB
+  max_wal_size: 4GB
+  wal_buffers: 32MB
+  archive_mode: true
+  archive_command: 'test ! -f /opt/backup/pgarchivewal/%f && cp %p /opt/backup/pgarchivewal/%f && chmod g+r /opt/backup/pgarchivewal/%f'
+  wal_level: replica
+  max_wal_senders: 10
+  max_replication_slots: 10
+  hot_standby: true
+patroni_superuser:
+  username: postgres
+  password: "pass"  заменить пароль на свой
+  username: replicator
+  password: "pass"  заменить пароль на свой
+patroni_pg_hba:
+  - "local all postgres peer"
+  - "local all all peer"
+  - "host all all 127.0.0.1/32 scram-sha-256"
+  - "host all all ::1/128 scram-sha-256"
+  - "host all all 192.168.117.0/24 scram-sha-256"
+  - "host replication replicator 192.168.117.123/32 scram-sha-256"
+  - "host replication replicator 192.168.117.124/32 scram-sha-256"
+  - "host replication replicator 192.168.117.125/32 scram-sha-256"
+patroni_pgpass: /var/lib/postgresql/.pgpass
+postgrespass: "pass" заменить пароль на свой
+replicatorpass: "pass" заменить пароль на свой

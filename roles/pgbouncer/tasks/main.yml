@@ -1,0 +1,72 @@
+- name: Install PgBouncer
+  apt:
+    name: pgbouncer
+    state: present
+    update_cache: yes
+
+- name: Create PgBouncer configuration directory
+  file:
+    path: /etc/pgbouncer
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0755'
+
+- name: Create PgBouncer log directory
+  file:
+    path: /var/log/pgbouncer
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0755'
+
+- name: Create PgBouncer pid directory
+  file:
+    path: /var/run/pgbouncer
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0755'
+
+- name: Create PgBouncer configuration file
+  template:
+    src: ./service_conf/pg/pgbouncer.ini.j2
+    dest: /etc/pgbouncer/pgbouncer.ini
+    owner: postgres
+    group: postgres
+    mode: '0640'
+  notify: Restart PgBouncer
+
+- name: Create PgBouncer userlist file
+  template:
+    src: ./service_conf/pg/userlist.txt.j2
+    dest: /etc/pgbouncer/userlist.txt
+    owner: postgres
+    group: postgres
+    mode: '0600'
+  notify: Restart PgBouncer
+
+- name: Create PgBouncer service file
+  template:
+    src: ./service_conf/pg/pgbouncer.service.j2
+    dest: /etc/systemd/system/pgbouncer.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload systemd and Restart PgBouncer
+
+- name: Ensure systemd is reloaded
+  systemd:
+    daemon_reload: yes
+
+- name: Start and enable PgBouncer service
+  systemd:
+    name: pgbouncer
+    state: started
+    enabled: yes
+
+- name: Verify PgBouncer is running
+  command: pgrep -u postgres -f pgbouncer
+  register: pgbouncer_running
+  changed_when: false
+  failed_when: pgbouncer_running.rc != 0

@@ -1,0 +1,223 @@
+---
+- name: "Copy config timesyncd.conf"
+  template:
+    src: "./service_conf/pg/timesyncd.conf.j2"
+    dest: "/etc/systemd/timesyncd.conf"
+
+- name: Установить необходимые пакеты
+  apt:
+    name:
+      - python3
+      - python3-pip
+      - libpq-dev
+      - curl
+      - vim
+      - lsb-release
+    state: present
+    update_cache: yes
+  become: yes
+
+- name: Установить python-psycopg2 и patroni
+  pip:
+    name:
+      - psycopg2-binary
+      - patroni[etcd3]
+    state: present
+  become: yes
+
+- name: Создать каталог для логов PostgreSQL
+  file:
+    path: /var/log/postgresql
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0755'
+  become: yes
+
+- name: Создать каталог для WAL архива
+  file:
+    path: /opt/backup/pgarchivewal
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0755'
+  become: yes
+
+- name: Создать домашнюю директорию для postgres
+  file:
+    path: /var/lib/postgresql
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0700'
+  become: yes
+
+- name: Получаем кодовое имя дистрибутива
+  command: lsb_release -cs
+  register: lsb_release_result
+  changed_when: false
+
+- name: Добавить ключ PostgreSQL
+  apt_key:
+    url: "https://www.postgresql.org/media/keys/ACCC4CF8.asc"
+    state: present
+  become: yes
+
+- name: Добавить репозиторий PostgreSQL
+  apt_repository:
+    repo: "deb [arch=amd64] https://apt.postgresql.org/pub/repos/apt {{ lsb_release_result.stdout }}-pgdg main"
+    state: present
+    filename: postgresql
+    update_cache: yes
+  become: yes
+
+- name: Установить PostgreSQL
+  apt:
+    name:
+      - postgresql-{{ postgresql_version }}
+      - patroni
+    state: present
+    update_cache: yes
+  become: yes
+
+- name: Stop patroni service on all nodes
+  systemd:
+   name: patroni
+   state: stopped
+   enabled: no
+
+- name: Stop PostgreSQL service on all nodes
+  systemd:
+   name: postgresql
+   state: stopped
+   enabled: no
+
+- name: Start PostgreSQL temporarily to create users on leader (pg02)
+  systemd:
+    name: postgresql
+    state: started
+  when: inventory_hostname == 'pg02'
+
+- name: Меняем пароль postgres через psql (на pg02)
+  ansible.builtin.shell: |
+   sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD '{{ postgrespass }}' SUPERUSER;"
+  register: psql_result
+  changed_when: psql_result.rc == 0
+  when: inventory_hostname == 'pg02'
+
+- name: Создаём replicator через psql (на pg02)
+  ansible.builtin.shell: |
+   sudo -u postgres psql -c "CREATE USER replicator WITH PASSWORD '{{ replicatorpass }}' REPLICATION;"
+  register: psql_result
+  changed_when: psql_result.rc == 0
+  when: inventory_hostname == 'pg02'
+
+- name: Остановить PostgreSQL на Pg02
+  systemd:
+    name: postgresql
+    state: stopped
+  when: inventory_hostname == 'pg02'
+
+- name: Создать файл pgpass
+  template:
+    src: ../../service_conf/pg/pgpass.j2
+    dest: "{{ patroni_pgpass }}"
+    owner: postgres
+    group: postgres
+    mode: '0600'
+  become: yes
+  notify: Перезапустить Patroni
+
+- name: Создать конфигурацию Patroni
+  template:
+    src: ../../service_conf/pg/patroni.yml.j2
+    dest: /etc/patroni/patroni.yml
+    owner: postgres
+    group: postgres
+    mode: '0644'
+  become: yes
+  notify: Перезапустить Patroni
+
+- name: Создать pg_hba.conf
+  template:
+    src: ../../service_conf/pg/pg_hba.conf.j2
+    dest: /etc/postgresql/16/main/pg_hba.conf
+    owner: postgres
+    group: postgres
+    mode: '0640'
+  become: yes
+  
+- name: Создать сервис Patroni
+  template:
+    src: ../../service_conf/pg/patroni.service.j2
+    dest: /etc/systemd/system/patroni.service
+    owner: root
+    group: root
+    mode: '0644'
+  become: yes
+  notify: Перезагрузить systemd и перезапустить Patroni
+
+- name: Ensure systemd is reloaded
+  systemd:
+    daemon_reload: yes 
+
+- name: Stop patroni service on all nodes
+  systemd:
+   name: patroni
+   state: stopped
+   enabled: no
+
+- name: Remove existing PostgreSQL data directory on Pg01 Pg02
+  file:
+    path: "{{ postgresql_data_dir }}"
+    state: absent
+  when: inventory_hostname != 'pg02'
+
+- name: Create PostgreSQL data directory on Pg01 Pg02
+  file:
+    path: "{{ postgresql_data_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0700'
+  when: inventory_hostname != 'pg02'
+
+- name: Clear etcd before starting Patroni
+  command: |
+    ETCDCTL_API=3 etcdctl --endpoints=192.168.117.123:2379,192.168.117.124:2379,192.168.117.125:2379 del /service/PGCL --prefix
+  run_once: true
+  delegate_to: "{{ groups['postgresql'] | select('match', 'pg02') | first }}"
+  when: inventory_hostname == 'pg02'
+
+- name: Start patroni on leader (pg02)
+  systemd:
+   name: patroni
+   state: started
+   enabled: yes
+  when: inventory_hostname == 'pg02'
+
+- name: Wait for pg02 to become leader
+  command: patronictl -c /etc/patroni/patroni.yml list
+  register: patroni_list
+  until: '"Leader" in patroni_list.stdout and "pg02" in patroni_list.stdout'
+  retries: 10
+  delay: 5
+  when: inventory_hostname == 'pg02'
+
+- name: Start patroni on repl (pg01,pg03)
+  systemd:
+   name: patroni
+   state: started
+   enabled: yes
+  when: inventory_hostname != 'pg02'
+
+- name: Reinitialize replicas
+  command: patronictl -c /etc/patroni/patroni.yml reinit PGCL {{ item }} --force
+  loop:
+    - pg01
+    - pg03
+  timeout: 300
+  register: reinit_result
+  failed_when: reinit_result.rc != 0 and 'already in progress' not in reinit_result.stderr  
+  when: inventory_hostname == 'pg02'
+  

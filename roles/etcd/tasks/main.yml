@@ -1,0 +1,63 @@
+---
+- name: "Create user"
+  user:
+    name: "etcd"
+    shell: "/bin/false"
+    system: yes
+    createhome: false
+
+- name: "Create dir from etcd"
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: "etcd"
+    group: "etcd"
+  loop: 
+    - "{{ config_dir }}"
+    - "{{ data_dir }}"
+    - "{{ logs_dir }}"
+    - "{{ download_dir }}"
+
+- name: "Download etcd packages"
+  get_url:
+    url: "{{ etcd_download_url }}"
+    dest: "{{ download_dir }}"
+
+- name: "extract tar file"
+  unarchive:
+    src: "{{ download_dir }}/etcd-{{ version  }}-linux-amd64.tar.gz"
+    dest: "{{ download_dir }}"
+    remote_src: yes
+
+- name: "copy bin files"
+  copy:
+    src: "{{ download_dir }}/etcd-{{ version  }}-linux-amd64/{{ item }}"
+    dest: "/usr/bin/{{ item }}"
+    owner: "etcd"
+    group: "etcd"
+    mode: '0755'
+    remote_src: yes
+  loop:
+    - etcd
+    - etcdctl
+
+- name: "copy unit files"
+  template:
+    src: "./service_conf/pg/etcd.service.j2"
+    dest: "/etc/systemd/system/etcd.service"
+    owner: "etcd"
+    group: "etcd"
+
+- name: Create etcd configuration
+  template:
+    src: ../../service_conf/pg/etcd.conf.yml.j2
+    dest: "{{ config_dir}}/etcd.conf"
+    owner: etcd
+    group: etcd
+  
+- name: "Restart services etcd"
+  service:
+    name: etcd
+    state: restarted
+    enabled: yes
+    daemon_reload: true

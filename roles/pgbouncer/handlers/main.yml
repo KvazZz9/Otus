@@ -1,0 +1,11 @@
+---
+- name: Reload systemd and Restart PgBouncer
+  systemd:
+    daemon_reload: yes
+    name: pgbouncer
+    state: restarted
+
+- name: Restart PgBouncer
+  systemd:
+    name: pgbouncer
+    state: restarted

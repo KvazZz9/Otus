@@ -1,0 +1,9 @@
+---
+etcd_initial_cluster_state: "new"
+etcd_initial_cluster_token: "etcd-token-cluster"
+config_dir: "/etc/etcd"
+data_dir: "/var/lib/etcd"
+logs_dir: "/var/log/etcd"
+download_dir: "/temp/download"
+etcd_download_url: "https://github.com/etcd-io/etcd/releases/download/{{ version }}/etcd-{{ version  }}-linux-amd64.tar.gz"
+version: "v3.5.18"

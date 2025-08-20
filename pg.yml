@@ -1,0 +1,25 @@
+---
+- name: Настройка дисков на всех узлах
+  become: true
+  hosts: etcd
+  roles:
+   - storage
+
+- name: Развертывание etcd
+  hosts: etcd
+  become: true
+  vars:
+  roles:
+    - etcd
+
+- name: Развертывание PostgreSQL + Patroni
+  hosts: etcd
+  become: true
+  roles:
+    - postgresql
+
+- name: Развертывание PgBouncer
+  hosts: pgbouncer
+  become: true
+  roles:
+    - pgbouncer 

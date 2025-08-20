@@ -1,0 +1,15 @@
+[Unit]
+Description=Patroni - PostgreSQL high-availability solution
+After=network.target
+
+[Service]
+User=postgres
+Group=postgres
+ExecStart=/usr/bin/patroni /etc/patroni/patroni.yml
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=process
+Restart=on-failure
+TimeoutSec=300
+
+[Install]
+WantedBy=multi-user.target

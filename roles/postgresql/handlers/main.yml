@@ -1,0 +1,13 @@
+---
+- name: Перезагрузить systemd и перезапустить Patroni
+  systemd:
+    daemon_reload: yes
+    name: patroni
+    state: restarted
+  become: yes
+
+- name: Перезапустить Patroni
+  systemd:
+    name: patroni
+    state: restarted
+  become: yes

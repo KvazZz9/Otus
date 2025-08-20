@@ -1,0 +1,4 @@
+- hosts: "hapg"
+  become: true
+  roles:
+   - hapg_up 

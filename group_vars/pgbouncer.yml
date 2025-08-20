@@ -1,0 +1,9 @@
+---
+pgbouncer_listen_addr: "{{ ansible_default_ipv4.address }}"
+pgbouncer_listen_port: 6432
+pgbouncer_auth_file: /etc/pgbouncer/userlist.txt
+pgbouncer_databases:
+  "*": "host=192.168.117.123 port=5432"
+pgbouncer_users:
+  postgres: "pass"  # Замени на свой пароль 
+  replicator: "pass"  # Замени на свой пароль 

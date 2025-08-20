@@ -1,0 +1,4 @@
+{% for host in groups['postgresql'] %}
+{{ hostvars[host]['ansible_default_ipv4']['address'] }}:5432:*:postgres:{{ postgrespass }}
+{{ hostvars[host]['ansible_default_ipv4']['address'] }}:5432:*:replicator:{{ replicatorpass }}
+{% endfor %}
