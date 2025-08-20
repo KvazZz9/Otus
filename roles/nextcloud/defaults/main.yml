@@ -36,9 +36,9 @@ postgres_host: "192.168.117.120"
 postgres_port: "5432"
 postgres_database: "nextcloud"
 postgres_user: "nextcloud"
-postgres_password: "OlkueYrt7364"
+postgres_password: "ваш пароль"
 postgres_admin_user: "postgres"
-postgres_admin_password: "Iklowp273Iewjw"
+postgres_admin_password: "ваш пароль"
 
 # Настройки NFS
 nfs_server: "192.168.117.130"
@@ -60,3 +60,4 @@ apache_modules:
   - remoteip
   - proxy
   - proxy_fcgi
+
