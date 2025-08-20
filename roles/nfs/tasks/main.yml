@@ -1,0 +1,26 @@
+---
+- name: Установить пакеты NFS
+  apt:
+    name: nfs-kernel-server
+    state: present
+    update_cache: yes
+
+- name: Создать директорию для монтирования
+  file:
+    path: /mnt/ncdata
+    state: directory
+    mode: '0755'
+
+- name: Настроить exports для NFS с виртуальным IP
+  lineinfile:
+    path: /etc/exports
+    line: "/mnt/ncdata 192.168.117.0/24(rw,sync,no_subtree_check)"
+    create: yes
+    mode: '0644'
+  notify: Перезапустить NFS
+
+- name: Запустить и включить службу NFS
+  systemd:
+    name: nfs-kernel-server
+    state: started
+    enabled: yes

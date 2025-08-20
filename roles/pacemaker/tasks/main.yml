@@ -1,0 +1,256 @@
+---
+- name: Install cluster packages
+  apt:
+    name:
+      - pacemaker
+      - corosync
+      - crmsh
+      - resource-agents
+      - fence-agents
+    state: present
+    update_cache: yes
+ 
+- name: Configure hosts file for cluster
+  lineinfile:
+    path: /etc/hosts
+    line: "{{ item.ip }} {{ item.name }}"
+    regexp: "^({{ item.ip }})"
+    state: present
+    backup: yes
+  loop: "{{ cluster_config.nodes }}"
+    
+- name: Copy Corosync configuration
+  template:
+    src: "{{ playbook_dir }}/service_conf/nfs/corosync.conf.j2"
+    dest: /etc/corosync/corosync.conf
+    owner: root
+    group: root
+    mode: '0644'
+    backup: yes
+  notify: restart corosync
+  
+- name: Generate corosync authkey (primary node only)
+  command: corosync-keygen
+  args:
+    creates: /etc/corosync/authkey
+  when: drbd_role == "primary"
+  
+- name: Fetch authkey from primary node
+  fetch:
+    src: /etc/corosync/authkey
+    dest: /tmp/authkey
+    flat: yes
+  when: drbd_role == "secondary"
+  
+- name: Copy authkey to secondary node
+  copy:
+    src: /tmp/authkey
+    dest: /etc/corosync/authkey
+    owner: root
+    group: root
+    mode: '0400'
+  when: drbd_role == "secondary"
+  
+- name: Set authkey permissions
+  file:
+    path: /etc/corosync/authkey
+    owner: root
+    group: root
+    mode: '0400'
+  
+- name: Enable and start corosync
+  systemd:
+    name: corosync
+    enabled: yes
+    state: started
+  
+- name: Wait for corosync to start
+  pause:
+    seconds: 10
+
+- name: Enable and start pacemaker
+  systemd:
+    name: pacemaker
+    enabled: yes
+    state: started
+  
+- name: Wait for pacemaker to start
+  pause:
+    seconds: 15
+
+- name: Check cluster status
+  command: crm status
+  register: cluster_status
+  retries: 5
+  delay: 10
+  until: cluster_status.rc == 0
+  changed_when: false
+  
+- name: Display cluster status
+  debug:
+    var: cluster_status.stdout_lines
+  
+- name: Copy custom DRBD resource agent
+  copy:
+    src: "{{ playbook_dir }}/service_conf/nfs/drbd_simple_agent"
+    dest: /usr/lib/ocf/resource.d/heartbeat/drbd_simple
+    owner: root
+    group: root
+    mode: '0755'
+    backup: yes
+  
+- name: Test DRBD resource agent
+  command: /usr/lib/ocf/resource.d/heartbeat/drbd_simple meta-data
+  register: agent_test
+  changed_when: false
+  failed_when: agent_test.rc != 0
+  
+- name: Verify DRBD agent works
+  debug:
+    msg: "DRBD resource agent installed and working"
+    
+---
+- name: Configure cluster basic properties (primary node only)
+  command: "{{ item }}"
+  loop:
+    - "crm configure property stonith-enabled=false"
+    - "crm configure property no-quorum-policy=ignore"
+    - "crm configure rsc_defaults resource-stickiness=100"
+  when: drbd_role == "primary"
+  run_once: true
+  
+- name: Wait for cluster configuration
+  pause:
+    seconds: 5
+    
+- name: Create DRBD resource
+  command: >
+    crm configure primitive drbd_primary ocf:heartbeat:drbd_simple
+    op start timeout=60
+    op stop timeout=60
+    op monitor interval=20 timeout=30
+  register: drbd_resource_result
+  failed_when: drbd_resource_result.rc != 0 and "already exists" not in drbd_resource_result.stderr
+ 
+- name: Create filesystem resource
+  command: >
+    crm configure primitive fs_r0 ocf:heartbeat:Filesystem
+    params device="{{ drbd_config.device }}" directory="{{ nfs_config.mount_point }}" fstype="ext4"
+    op start timeout=60
+    op stop timeout=60
+    op monitor interval=20 timeout=40
+  register: fs_resource_result
+  failed_when: fs_resource_result.rc != 0 and "already exists" not in fs_resource_result.stderr
+  
+- name: Create VIP resource
+  command: >
+    crm configure primitive vip_nfs ocf:heartbeat:IPaddr2
+    params ip="{{ vip_config.address }}" cidr_netmask="{{ vip_config.netmask }}"
+    op start timeout=20
+    op stop timeout=20
+    op monitor interval=10 timeout=20
+  register: vip_resource_result
+  failed_when: vip_resource_result.rc != 0 and "already exists" not in vip_resource_result.stderr
+  
+- name: Create NFS server resource
+  command: >
+    crm configure primitive nfs_server ocf:heartbeat:nfsserver
+    params nfs_shared_infodir="{{ nfs_config.info_dir }}"
+    op start timeout=40
+    op stop timeout=20
+    op monitor interval=10 timeout=20
+  register: nfs_server_resource_result
+  failed_when: nfs_server_resource_result.rc != 0 and "already exists" not in nfs_server_resource_result.stderr
+  
+- name: Create NFS export resource
+  command: >
+    crm configure primitive nfs_export ocf:heartbeat:exportfs
+    params clientspec="{{ nfs_config.client_spec }}"
+    options="{{ nfs_config.export_options }}"
+    directory="{{ nfs_config.export_dir }}"
+    fsid="{{ nfs_config.fsid }}"
+    op start timeout=40
+    op stop timeout=20
+    op monitor interval=10 timeout=20
+  register: nfs_export_resource_result
+  failed_when: nfs_export_resource_result.rc != 0 and "already exists" not in nfs_export_resource_result.stderr
+  
+- name: Create NFS services group
+  command: crm configure group nfs_services fs_r0 vip_nfs nfs_server nfs_export
+  register: group_result
+  failed_when: group_result.rc != 0 and "already exists" not in group_result.stderr
+  
+- name: Create colocation constraint
+  command: crm configure colocation col_fs_on_drbd inf: nfs_services drbd_primary
+  register: colocation_result
+  failed_when: colocation_result.rc != 0 and "already exists" not in colocation_result.stderr
+  
+- name: Create order constraint
+  command: crm configure order ord_drbd_before_nfs inf: drbd_primary nfs_services
+  register: order_result
+  failed_when: order_result.rc != 0 and "already exists" not in order_result.stderr
+  tags: cluster-resources
+
+- name: Create NFS directory structure
+  block:
+    - name: Mount DRBD temporarily to create directories
+      mount:
+        path: "{{ nfs_config.mount_point }}"
+        src: "{{ drbd_config.device }}"
+        fstype: ext4
+        state: mounted
+
+    - name: Create NFS directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "{{ nfs_config.info_dir }}"
+        - "{{ nfs_config.export_dir }}"
+
+    - name: Set exports directory permissions
+      file:
+        path: "{{ nfs_config.export_dir }}"
+        owner: nobody
+        group: nogroup
+        mode: '0755'
+
+    - name: Unmount DRBD
+      mount:
+        path: "{{ nfs_config.mount_point }}"
+        state: unmounted
+  when: drbd_role == "primary"
+  tags: cluster-resources
+
+- name: Start DRBD resource
+  command: crm resource start drbd_primary
+  register: start_drbd_result
+  failed_when: false
+  tags: cluster-resources
+
+- name: Wait for DRBD resource to start
+  pause:
+    seconds: 10
+
+- name: Start NFS services group
+  command: crm resource start nfs_services
+  register: start_nfs_result
+  failed_when: false
+  tags: cluster-resources
+
+- name: Wait for resources to start
+  pause:
+    seconds: 20
+
+- name: Check final cluster status
+  command: crm status
+  register: final_status
+  changed_when: false
+  tags: cluster-resources
+
+- name: Display final cluster status
+  debug:
+    var: final_status.stdout_lines
+  tags: cluster-resources
+  

@@ -1,0 +1,11 @@
+---
+- name: restart corosync
+  systemd:
+    name: corosync
+    state: restarted
+  notify: restart pacemaker
+
+- name: restart pacemaker
+  systemd:
+    name: pacemaker
+    state: restarted

@@ -1,0 +1,28 @@
+totem {
+    version: 2
+    cluster_name: {{ cluster_config.name }}
+    transport: udpu
+    secauth: off
+}
+
+nodelist {
+{% for node in cluster_config.nodes %}
+    node {
+        ring0_addr: {{ node.name }}
+        name: {{ node.name }}
+        nodeid: {{ node.id }}
+    }
+{% endfor %}
+}
+
+quorum {
+    provider: corosync_votequorum
+    two_node: 1
+}
+
+logging {
+    to_logfile: yes
+    logfile: /var/log/corosync/corosync.log
+    to_syslog: yes
+    timestamp: on
+}

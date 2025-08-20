@@ -1,0 +1,4 @@
+- hosts: "balance"
+  become: true
+  roles:
+   - ha_up 

@@ -1,0 +1,5 @@
+---
+- name: Перезапустить NFS
+  systemd:
+    name: nfs-kernel-server
+    state: restarted

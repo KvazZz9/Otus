@@ -1,0 +1,90 @@
+---
+- name: Disable UFW
+  ufw:
+    state: disabled
+
+- name: Install required packages
+  apt:
+    name: "{{ item }}"
+    state: present
+    update_cache: yes
+  loop:
+    - haproxy
+    - keepalived
+    - iproute2
+
+- name: Get network interface facts
+  setup:
+    filter: "ansible_default_ipv4"
+  register: net_facts
+
+- name: Set default network interface
+  set_fact:
+    keepalived_interface: "{{ net_facts.ansible_facts.ansible_default_ipv4.interface | default('ens192') }}"
+
+- name: Create keepalived directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: 0755
+  loop:
+    - /etc/keepalived
+    - /etc/keepalived/scripts
+
+- name: Configure HAProxy
+  template:
+    src: ./service_conf/ha/haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Configure Keepalived
+  template:
+    src: ./service_conf/ha/keepalived.conf.j2
+    dest: /etc/keepalived/keepalived.conf
+    owner: root
+    group: root
+    mode: '0644'
+
+- name:  Configure HAProxy check script
+  template:
+    src: ./service_conf/ha/check_haproxy.sh.j2
+    dest: /etc/keepalived/scripts/check_haproxy.sh
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Copy SSL certificates
+  copy:
+    src: ./ssl/ssl_ha/ssl/
+    dest: /etc/haproxy/ssl/
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Enable IP nonlocal bind
+  sysctl:
+    name: net.ipv4.ip_nonlocal_bind
+    value: '1'
+    state: present
+    reload: yes
+
+- name: Start and enable HAProxy
+  service:
+    name: haproxy
+    state: restarted
+    enabled: yes 
+
+- name: Validate Keepalived config
+  command: keepalived -t -f /etc/keepalived/keepalived.conf
+  register: keepalived_test
+  changed_when: false
+  ignore_errors: true
+
+- name: Start and enable Keepalived
+  service:
+    name: keepalived
+    state: restarted
+    enabled: yes
+  when: keepalived_test.rc == 0

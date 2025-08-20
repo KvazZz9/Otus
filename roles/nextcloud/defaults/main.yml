@@ -1,0 +1,62 @@
+---
+# Настройки PHP
+php_version: "8.2"
+php_modules:
+  - curl
+  - zip
+  - gd
+  - fpm
+  - ctype
+  - dom
+  - libxml
+  - mbstring
+  - posix
+  - session
+  - simplexml
+  - xmlreader
+  - xmlwriter
+  - zlib
+  - intl
+  - gmp
+  - bcmath
+  - xml
+  - imagick
+  - pgsql
+
+# Настройки Nextcloud
+nextcloud_archive: "latest.zip"
+nextcloud_download_url: "https://download.nextcloud.com/server/releases/latest.zip"
+nextcloud_domain: "cloud.hayas.ru"
+nextcloud_document_root: "/var/www/nextcloud"
+nextcloud_user: "www-data"
+nextcloud_group: "www-data"
+
+# Настройки PostgreSQL
+postgres_host: "192.168.117.120"
+postgres_port: "5432"
+postgres_database: "nextcloud"
+postgres_user: "nextcloud"
+postgres_password: "OlkueYrt7364"
+postgres_admin_user: "postgres"
+postgres_admin_password: "Iklowp273Iewjw"
+
+# Настройки NFS
+nfs_server: "192.168.117.130"
+nfs_share: "/srv/nfs"
+nfs_mount_point: "/mnt/nfs"
+nfs_mount_options: "rw,sync,hard,intr,timeo=30,retrans=3"
+nextcloud_nfs_path: "/mnt/nfs/exports"
+
+# Пути к файлам конфигурации
+config_directory: "./service_conf/app"
+
+# Настройки Apache
+apache_modules:
+  - rewrite
+  - headers
+  - env
+  - dir
+  - mime
+  - remoteip
+  - proxy
+  - proxy_fcgi

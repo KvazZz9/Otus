@@ -1,0 +1,6 @@
+- name: поднимаем апп сервера
+  become: true
+  hosts: cloudapp
+  roles:
+   - nextcloud
+  

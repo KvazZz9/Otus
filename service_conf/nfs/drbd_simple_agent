@@ -1,0 +1,98 @@
+#!/bin/bash
+
+# Simple DRBD resource agent
+# Manages DRBD Primary/Secondary roles
+
+OCF_ROOT=/usr/lib/ocf
+. $(OCF_ROOT)/lib/heartbeat/ocf-shellfuncs
+
+RESOURCE="r0"
+
+drbd_simple_start() {
+    # Check if already Primary
+    ROLE=$(drbdadm role $RESOURCE 2>/dev/null | cut -d'/' -f1)
+    if [ "$ROLE" = "Primary" ]; then
+        return $OCF_SUCCESS
+    fi
+
+    # Try to become Primary
+    drbdadm primary $RESOURCE
+    if [ $? -eq 0 ]; then
+        return $OCF_SUCCESS
+    else
+        return $OCF_ERR_GENERIC
+    fi
+}
+
+drbd_simple_stop() {
+    # Check current role
+    ROLE=$(drbdadm role $RESOURCE 2>/dev/null | cut -d'/' -f1)
+    if [ "$ROLE" = "Secondary" ]; then
+        return $OCF_SUCCESS
+    fi
+
+    # Become Secondary
+    drbdadm secondary $RESOURCE
+    if [ $? -eq 0 ]; then
+        return $OCF_SUCCESS
+    else
+        return $OCF_ERR_GENERIC
+    fi
+}
+
+drbd_simple_monitor() {
+    # Check if DRBD is running and we are Primary
+    if ! drbdadm status $RESOURCE >/dev/null 2>&1; then
+        return $OCF_NOT_RUNNING
+    fi
+
+    ROLE=$(drbdadm role $RESOURCE 2>/dev/null | cut -d'/' -f1)
+
+    if [ "$ROLE" = "Primary" ]; then
+        return $OCF_SUCCESS
+    else
+        return $OCF_NOT_RUNNING
+    fi
+}
+
+drbd_simple_meta_data() {
+    cat <<END
+<?xml version="1.0"?>
+<!DOCTYPE resource-agent SYSTEM "ra-api-1.dtd">
+<resource-agent name="drbd_simple">
+<version>1.0</version>
+<longdesc lang="en">
+Simple DRBD resource agent for Primary/Secondary management
+</longdesc>
+<shortdesc lang="en">Simple DRBD agent</shortdesc>
+<actions>
+<action name="start" timeout="60" />
+<action name="stop" timeout="60" />
+<action name="monitor" timeout="30" interval="20" depth="0" />
+<action name="meta-data" timeout="5" />
+</actions>
+</resource-agent>
+END
+}
+
+case "$__OCF_ACTION" in
+    meta-data)
+        drbd_simple_meta_data
+        exit $OCF_SUCCESS
+        ;;
+    start)
+        drbd_simple_start
+        ;;
+    stop)
+        drbd_simple_stop
+        ;;
+    status|monitor)
+        drbd_simple_monitor
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|monitor|meta-data}"
+        exit $OCF_ERR_UNIMPLEMENTED
+        ;;
+esac
+
+exit $?

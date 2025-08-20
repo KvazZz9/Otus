@@ -1,0 +1,17 @@
+---
+- name: restart apache2
+  systemd:
+    name: apache2
+    state: restarted
+    enabled: yes
+
+- name: reload apache2
+  systemd:
+    name: apache2
+    state: reloaded
+
+- name: restart php-fpm
+  systemd:
+    name: "php{{ php_version }}-fpm"
+    state: restarted
+    enabled: yes

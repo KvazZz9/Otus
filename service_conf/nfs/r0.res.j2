@@ -1,0 +1,44 @@
+resource r0 {
+  protocol C;
+  startup {
+    wfc-timeout 15;
+    degr-wfc-timeout 10;
+    outdated-wfc-timeout 5;
+  }
+  disk {
+    resync-rate 700M;
+    c-max-rate 1000M;
+  }
+  net {
+    max-buffers 8000;
+    sndbuf-size 0;
+    rcvbuf-size 0;
+    cram-hmac-alg sha1;
+    shared-secret "вашпароль";
+    after-sb-0pri discard-zero-changes;
+    after-sb-1pri discard-secondary;
+    after-sb-2pri disconnect;
+    ping-timeout 3;    # Уменьшаем для быстрого обнаружения
+    ping-int 10;       # Стандартный интервал
+    timeout 60;        # Таймаут соединения
+    # Добавляем для лучшей интеграции с Pacemaker
+    allow-two-primaries no;
+  }
+  handlers {
+    # Важно для интеграции с Pacemaker
+    fence-peer "/usr/lib/drbd/crm-fence-peer.sh";
+    after-resync-target "/usr/lib/drbd/crm-unfence-peer.sh";
+  }
+  on NFS01 {
+    device /dev/drbd0;
+    disk /dev/sdb1;
+    address 192.168.117.131:7788;
+    meta-disk internal;
+  }
+  on NFS02 {
+    device /dev/drbd0;
+    disk /dev/sdb1;
+    address 192.168.117.132:7788;
+    meta-disk internal;
+  }
+}

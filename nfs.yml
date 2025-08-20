@@ -1,0 +1,21 @@
+---
+- name: установка nfs
+  become: true
+  hosts: nfs
+  roles:
+   - nfs
+
+- name: тасройка drb
+  hosts: nfs
+  become: true
+  vars:
+  roles:
+    - drbd
+
+- name: настройка pacemaker
+  hosts: nfs
+  become: true
+  vars:
+    pacemaker_password: "вашпароль"
+  roles:
+    - pacemaker

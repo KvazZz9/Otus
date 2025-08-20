@@ -1,0 +1,136 @@
+---
+- name: Установить имя хоста
+  hostname:
+    name: "{{ 'NFS01' if inventory_hostname == 'NFS01' else 'NFS02' }}"
+
+- name: Обновить файл /etc/hosts
+  lineinfile:
+    path: /etc/hosts
+    line: "{{ item }}"
+    state: present
+  loop:
+    - "192.168.117.131 NFS01"
+    - "192.168.117.132 NFS02"
+
+- name: Установить пакеты DRBD и iperf3
+  apt:
+    name:
+      - drbd-utils
+      - iperf3
+    state: present
+    update_cache: yes
+
+- name: Установить MTU 9000 для интерфейса ens192
+  command: ip link set ens192 mtu 9000
+  when: inventory_hostname == 'NFS01' or inventory_hostname == 'NFS02'
+  ignore_errors: yes
+  changed_when: true
+
+- name: Создать или обновить конфигурацию netplan
+  template:
+    src: service_conf/nfs/netplan.j2
+    dest: /etc/netplan/99-netcfg-vmware.yaml
+    mode: '0644'
+  when: inventory_hostname == 'NFS01' or inventory_hostname == 'NFS02'
+  notify: Apply netplan
+
+- name: Оптимизировать сетевые параметры ядра
+  sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: yes
+  loop:
+    - { name: "net.core.rmem_max", value: "16777216" }
+    - { name: "net.core.wmem_max", value: "16777216" }
+    - { name: "net.ipv4.tcp_rmem", value: "4096 87380 16777216" }
+    - { name: "net.ipv4.tcp_wmem", value: "4096 65536 16777216" }
+
+- name: Создать конфигурацию DRBD
+  template:
+    src: service_conf/nfs/r0.res.j2
+    dest: /etc/drbd.d/r0.res
+    mode: '0644'
+  when: inventory_hostname == 'NFS01' or inventory_hostname == 'NFS02'
+
+- name: Проверить наличие диска /dev/sdb
+  stat:
+    path: /dev/sdb
+  register: sdb_stat
+
+- name: Инициализировать диск /dev/sdb
+  command: parted -s /dev/sdb mklabel gpt mkpart primary ext4 0% 100%
+  when: sdb_stat.stat.exists
+  args:
+    creates: /dev/sdb1
+
+- name: Проверить наличие раздела /dev/sdb1
+  stat:
+    path: /dev/sdb1
+  register: sdb1_stat
+
+- name: Инициализировать метаданные DRBD
+  command: drbdadm create-md r0
+  when: sdb1_stat.stat.exists
+  args:
+    creates: /var/lib/drbd/.drbd.ctrl
+    
+- name: Остановить службу DRBD
+  systemd:
+    name: drbd
+    state: stopped
+  when: inventory_hostname == 'NFS01' or inventory_hostname == 'NFS02'
+    
+- name: Отключить ресурс DRBD
+  command: drbdadm down r0
+  when: inventory_hostname == 'NFS01' or inventory_hostname == 'NFS02'
+  ignore_errors: yes
+    
+- name: Активировать ресурс DRBD
+  command: drbdadm up r0
+  when: inventory_hostname == 'NFS01' or inventory_hostname == 'NFS02'
+  ignore_errors: yes
+    
+- name: Установить первичную ноду (только на NFS01)
+  command: drbdadm primary r0 --force
+  when: inventory_hostname == 'NFS01'
+  ignore_errors: yes
+
+- name: Установить вторичную ноду (только на NFS02)
+  command: drbdadm secondary r0
+  when: inventory_hostname == 'NFS02'
+  ignore_errors: yes
+
+- name: Подключить DRBD на обеих нодах
+  command: drbdadm connect r0
+  when: inventory_hostname == 'NFS01' or inventory_hostname == 'NFS02'
+  ignore_errors: yes
+    
+- name: Запустить и включить службу DRBD
+  systemd:
+    name: drbd
+    state: started
+    enabled: yes
+
+- name: Ожидать завершения синхронизации DRBD (только на NFS01)
+  command: drbdadm status r0
+  register: drbd_sync
+  until: "'disk:UpToDate' in drbd_sync.stdout and 'peer-disk:UpToDate' in drbd_sync.stdout"
+  retries: 180
+  delay: 20
+  when: inventory_hostname == 'NFS01'
+  changed_when: false
+
+- name: Проверить наличие устройства DRBD (только на NFS01)
+  stat:
+    path: /dev/drbd0
+  register: drbd_device
+  when: inventory_hostname == 'NFS01'
+
+- name: Форматировать устройство DRBD (только на NFS01)
+  filesystem:
+    fstype: ext4
+    dev: /dev/drbd0
+  when: inventory_hostname == 'NFS01' and drbd_device.stat.exists
+
+  

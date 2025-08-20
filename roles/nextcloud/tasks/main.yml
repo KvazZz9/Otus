@@ -1,0 +1,352 @@
+---
+- name: Установить psycopg2
+  apt:
+    name:
+     - python3-psycopg2
+    state: present
+    update_cache: yes
+  become: yes
+
+- name: "Обновление пакетов системы"
+  apt:
+    update_cache: yes
+    upgrade: dist
+    cache_valid_time: 3600
+
+- name: "Установка NFS клиента"
+  apt:
+    name: nfs-common
+    state: present
+
+- name: "Установка Apache2"
+  apt:
+    name: apache2
+    state: present
+
+- name: "Создание точки монтирования NFS"
+  file:
+    path: "{{ nfs_mount_point }}"
+    state: directory
+    mode: '0755'
+
+- name: "Монтирование NFS шары"
+  mount:
+    path: "{{ nfs_mount_point }}"
+    src: "{{ nfs_server }}:{{ nfs_share }}"
+    fstype: nfs
+    opts: "{{ nfs_mount_options }}"
+    state: mounted
+
+- name: "Создание директории exports в NFS"
+  file:
+    path: "{{ nextcloud_nfs_path }}"
+    state: directory
+    owner: "{{ nextcloud_user }}"
+    group: "{{ nextcloud_group }}"
+    mode: '0755'
+
+- name: "Добавление PPA репозитория для PHP"
+  apt_repository:
+    repo: "ppa:ondrej/php"
+    state: present
+    update_cache: yes
+
+- name: "Установка PHP {{ php_version }} и модулей"
+  apt:
+    name:
+      - "php{{ php_version }}"
+      - "php{{ php_version }}-curl"
+      - "php{{ php_version }}-zip"
+      - "php{{ php_version }}-gd"
+      - "php{{ php_version }}-fpm"
+      - "php{{ php_version }}-ctype"
+      - "php{{ php_version }}-dom"
+      - "php{{ php_version }}-xml"
+      - "php{{ php_version }}-mbstring"
+      - "php{{ php_version }}-posix"
+      - "php{{ php_version }}-intl"
+      - "php{{ php_version }}-gmp"
+      - "php{{ php_version }}-bcmath"
+      - "php{{ php_version }}-imagick"
+      - "php{{ php_version }}-pgsql"
+      - memcached
+    state: present
+
+- name: "Включение модуля pdo_pgsql для PHP"
+  command: phpenmod pdo_pgsql
+  notify: restart apache2
+
+- name: "Установка Python модулей для работы с PostgreSQL"
+  pip:
+    name: 
+      - psycopg2-binary
+    state: present
+  delegate_to: localhost
+  become: no
+  run_once: true
+
+- name: Установка PostgreSQL 16 Client
+  block:
+    - name: Добавить ключ репозитория PostgreSQL
+      ansible.builtin.apt_key:
+        url: "https://www.postgresql.org/media/keys/ACCC4CF8.asc"
+        state: present
+
+    - name: Добавить APT-репозиторий PostgreSQL 16
+      ansible.builtin.apt_repository:
+        repo: "deb https://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main"
+        state: present
+        filename: pgdg.list
+
+    - name: Обновить кеш APT (без установки пакетов)
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Установить postgresql-client-16
+      ansible.builtin.apt:
+        name: postgresql-client-16
+        state: present
+        update_cache: no  
+
+- name: "Проверка соединения с PostgreSQL сервером"
+  wait_for:
+    host: "{{ postgres_host }}"
+    port: "{{ postgres_port }}"
+    timeout: 10
+    state: started
+
+- name: "Проверка существования пользователя nextcloud в PostgreSQL"
+  postgresql_query:
+    login_host: "{{ postgres_host }}"
+    login_port: "{{ postgres_port }}"
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    db: "postgres"
+    query: "SELECT 1 FROM pg_roles WHERE rolname='{{ postgres_user }}'"
+  register: user_exists
+  become: no
+  run_once: true
+
+- name: "Создание пользователя nextcloud в PostgreSQL"
+  postgresql_user:
+    login_host: "{{ postgres_host }}"
+    login_port: "{{ postgres_port }}"
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    name: "{{ postgres_user }}"
+    password: "{{ postgres_password }}"
+    encrypted: yes
+    state: present
+  when: user_exists.rowcount == 0
+  become: no
+  run_once: true
+
+- name: "Проверка существования базы данных nextcloud"
+  postgresql_query:
+    login_host: "{{ postgres_host }}"
+    login_port: "{{ postgres_port }}"
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    db: "postgres"
+    query: "SELECT 1 FROM pg_database WHERE datname='{{ postgres_database }}'"
+  register: db_exists
+  become: no
+  run_once: true
+
+- name: "Создание базы данных nextcloud"
+  postgresql_db:
+    login_host: "{{ postgres_host }}"
+    login_port: "{{ postgres_port }}"
+    login_user: "{{ postgres_admin_user }}"
+    login_password: "{{ postgres_admin_password }}"
+    name: "{{ postgres_database }}"
+    owner: "{{ postgres_user }}"
+    encoding: 'UTF8'
+    lc_collate: 'en_US.UTF-8'
+    lc_ctype: 'en_US.UTF-8'
+    template: 'template0'
+    state: present
+  when: db_exists.rowcount == 0
+  become: no
+  run_once: true
+
+- name: "Предоставление прав пользователю nextcloud на базу данных"
+  shell: |
+    PGPASSWORD="{{ postgres_admin_password }}" psql -h {{ postgres_host }} -p {{ postgres_port }} -U {{ postgres_admin_user }} -c "GRANT ALL PRIVILEGES ON DATABASE {{ postgres_database }} TO {{ postgres_user }}; GRANT CREATE ON SCHEMA public TO {{ postgres_user }}; GRANT ALL PRIVILEGES ON SCHEMA public TO {{ postgres_user }};"
+  become: no
+  run_once: true
+
+- name: "Создание директории для логов PHP"
+  file:
+    path: /var/log/php
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+
+- name: "Включение необходимых модулей Apache"
+  apache2_module:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ apache_modules }}"
+  notify: restart apache2
+
+- name: "Создание директории для Nextcloud на NFS"
+  file:
+    path: "{{ nextcloud_nfs_path }}/nextcloud"
+    state: directory
+    owner: "{{ nextcloud_user }}"
+    group: "{{ nextcloud_group }}"
+    mode: '0755'
+
+- name: "Создание символической ссылки из /var/www/nextcloud на NFS"
+  file:
+    src: "{{ nextcloud_nfs_path }}/nextcloud"
+    dest: "{{ nextcloud_document_root }}"
+    state: link
+    force: yes
+
+- name: "Проверка доступности сайта Nextcloud"
+  uri:
+    url: "https://download.nextcloud.com/server/releases/latest.zip"
+    method: HEAD
+    status_code: [200, 302]
+  delegate_to: localhost
+  become: no
+  run_once: true
+
+- name: "Скачивание последней версии Nextcloud"
+  get_url:
+    url: "{{ nextcloud_download_url }}"
+    dest: "/tmp/{{ nextcloud_archive }}"
+    mode: '0644'
+    timeout: 300
+    force: yes
+    validate_certs: yes
+  register: nextcloud_download
+  retries: 3
+  delay: 5
+  run_once: true
+  when: inventory_hostname == 'app01'
+
+- name: "Установка unzip для распаковки архива"
+  apt:
+    name: unzip
+    state: present
+
+- name: "Распаковка архива Nextcloud на NFS"
+  unarchive:
+    src: "/tmp/{{ nextcloud_archive }}"
+    dest: "{{ nextcloud_nfs_path }}/"
+    remote_src: yes
+    owner: "{{ nextcloud_user }}"
+    group: "{{ nextcloud_group }}"
+    creates: "{{ nextcloud_nfs_path }}/nextcloud/index.php"
+  run_once: true
+  when: inventory_hostname == 'app01'
+
+- name: "Установка корректных прав на директорию Nextcloud на NFS"
+  file:
+    path: "{{ nextcloud_nfs_path }}/nextcloud"
+    owner: "{{ nextcloud_user }}"
+    group: "{{ nextcloud_group }}"
+    recurse: yes
+    mode: 'u=rwX,g=rX,o=rX'
+  run_once: true
+  when: inventory_hostname == 'app01'
+
+- name: "Создание директории данных Nextcloud с правильными правами"
+  file:
+    path: "{{ nextcloud_nfs_path }}/nextcloud/data"
+    state: directory
+    owner: "{{ nextcloud_user }}"
+    group: "{{ nextcloud_group }}"
+    mode: '0770'
+  run_once: true
+  when: inventory_hostname == 'app01'
+
+#- name: "Проверка существования конфигурационных файлов"
+#  stat:
+#   path: "{{ config_directory }}/{{ item }}"
+# delegate_to: localhost
+#  register: config_files_stat
+#  become: no
+#  loop:
+#    - nextcloud.conf
+#    - php-fpm-nextcloud.conf
+#    - nextcloud-proxy.conf
+
+#- name: "Ошибка: конфигурационные файлы не найдены"
+#  fail:
+#    msg: "Конфигурационный файл {{ item.item }} не найден в директории {{ config_directory }}"
+#  when: not item.stat.exists
+#  loop: "{{ config_files_stat.results }}"
+
+- name: "Копирование конфигурации виртуального хоста Nextcloud"
+  copy:
+    src: "{{ config_directory }}/nextcloud.conf"
+    dest: /etc/apache2/sites-available/nextcloud.conf
+    mode: '0644'
+    backup: yes
+  notify: restart apache2
+
+- name: "Копирование конфигурации PHP-FPM для Nextcloud"
+  copy:
+    src: "{{ config_directory }}/php-fpm-nextcloud.conf"
+    dest: "/etc/php/{{ php_version }}/fpm/pool.d/nextcloud.conf"
+    mode: '0644'
+    backup: yes
+  notify: restart php-fpm
+
+- name: "Отключение пула по умолчанию"
+  command: sudo mv /etc/php/8.2/fpm/pool.d/www.conf /etc/php/8.2/fpm/pool.d/www.conf.disabled
+  notify: restart apache2
+  ignore_errors: yes
+  tags: apache
+
+- name: "Копирование дополнительных конфигураций (если есть)"
+  copy:
+    src: "{{ config_directory }}/{{ item }}"
+    dest: "/etc/apache2/conf-available/{{ item }}"
+    mode: '0644'
+  loop:
+    - security.conf
+    - performance.conf
+    - nextcloud-proxy.conf
+  ignore_errors: yes
+  notify: reload apache2
+
+- name: "Включение дополнительных конфигураций Apache"
+  command: "a2enconf {{ item }}"
+  loop:
+    - security
+    - performance
+    - nextcloud-proxy
+  ignore_errors: yes
+  notify: reload apache2
+
+- name: "Отключение сайта по умолчанию"
+  command: a2dissite 000-default
+  notify: restart apache2
+  ignore_errors: yes
+  tags: apache
+
+- name: "Включение сайта Nextcloud"
+  command: a2ensite nextcloud
+  notify: restart apache2
+  tags: apache
+
+- name: "Проверка синтаксиса конфигурации Apache"
+  command: apache2ctl configtest
+  register: apache_syntax_check
+  failed_when: apache_syntax_check.rc != 0
+  changed_when: false
+  tags: apache
+
+- name: "Очистка временных файлов"
+  file:
+    path: "/tmp/{{ nextcloud_archive }}"
+    state: absent
+  run_once: true
+  when: inventory_hostname == 'app01'
