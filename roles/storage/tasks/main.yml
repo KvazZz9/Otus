@@ -1,0 +1,142 @@
+---
+- name: Создание группы postgres
+  group:
+    name: postgres
+    state: present
+    system: yes 
+    
+- name: Создание пользователя postgres
+  user:
+    name: postgres
+    group: postgres
+    system: yes
+    shell: /bin/bash
+    create_home: no
+    comment: "PostgreSQL administrator"
+
+- name: Проверка наличия дисков
+  stat:
+    path: /dev/{{ item }}
+  register: disks
+  loop:
+    - sdb
+    - sdc
+
+- name: ap install
+  apt:  
+    name:
+      - cloud-guest-utils
+      - lvm2
+      - e2fsprogs
+      - xfsprogs
+    state: present
+
+#- name: resize sda2
+#  command: growpart /dev/sda 2
+#  when: ansible_facts['devices']['sda']['partitions']['sda2'] is defined
+#  become: yes
+
+#- name: resize file system sda2
+#  command: resize2fs /dev/sda2
+#  when: ansible_facts['devices']['sda']['partitions']['sda2'] is defined
+#  become: yes
+
+- name: Создание LVM для PostgreSQL (/dev/sdb)
+  block:
+    - name: Create physical volume (PV) on /dev/sdb
+      command: pvcreate /dev/sdb
+      become: yes
+      when: disks.results[0].stat.exists
+
+    - name: Создание группы томов
+      community.general.lvg:
+        vg: pg_vg
+        pvs: /dev/sdb
+        state: present
+      when: disks.results[0].stat.exists
+
+    - name: Создание логического тома
+      community.general.lvol:
+        vg: pg_vg
+        lv: pg_data
+        size: "100%FREE"
+        state: present
+      when: disks.results[0].stat.exists
+
+    - name: Форматирование в XFS
+      filesystem:
+        fstype: xfs
+        dev: /dev/pg_vg/pg_data
+      when: disks.results[0].stat.exists
+   
+    - name: Создание директории для PostgreSQL
+      file:
+        path: /var/lib/postgresql
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: 0755
+      when: disks.results[0].stat.exists
+
+    - name: Монтирование тома
+      mount:
+        path: /var/lib/postgresql
+        src: /dev/pg_vg/pg_data
+        fstype: xfs
+        state: mounted
+        opts: "defaults,noatime"
+      when: disks.results[0].stat.exists
+
+- name: Создание LVM для бэкапов (/dev/sdc)
+  block:
+    - name: Create physical volume (PV) on /dev/sdb
+      command: pvcreate /dev/sdc
+      become: yes
+      when: disks.results[0].stat.exists
+
+    - name: Создание группы томов
+      community.general.lvg:
+        vg: backup_vg
+        pvs: /dev/sdc
+        state: present
+      when: disks.results[1].stat.exists
+
+    - name: Создание логического тома
+      community.general.lvol:
+        vg: backup_vg
+        lv: backup_lv
+        size: "100%FREE"
+        state: present
+      when: disks.results[1].stat.exists
+
+    - name: Форматирование в XFS
+      filesystem:
+        fstype: xfs
+        dev: /dev/backup_vg/backup_lv
+      when: disks.results[1].stat.exists
+
+    - name: Создание директории для бэкапов
+      file:
+        path: /opt/backup
+        state: directory
+        owner: postgres
+        group: postgres
+        mode: 0755
+
+    - name: Монтирование тома
+      mount:
+        path: /opt/backup
+        src: /dev/backup_vg/backup_lv
+        fstype: xfs
+        state: mounted
+        opts: "defaults,noatime"
+      when: disks.results[1].stat.exists
+
+- name: Добавить записи в /etc/fstab
+  ansible.builtin.blockinfile:
+    path: /etc/fstab
+    block: |
+      /dev/pg_vg/pg_data  /var/lib/postgresql  xfs  defaults,noatime  0 0
+      /dev/backup_vg/backup_lv  /opt/backup  xfs  defaults,noatime  0 0
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - FSTAB ENTRIES"
+    insertafter: EOF
